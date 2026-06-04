@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProcessAI → Word · Генератор професійних документів</title>
+
+<!-- docx library (UMD) with fallback -->
+<script>
+(function () {
+  function load(url, cb, fb) {
+    var s = document.createElement('script');
+    s.src = url;
+    s.onload = cb;
+    s.onerror = function () {
+      if (fb) { var s2 = document.createElement('script'); s2.src = fb; s2.onload = cb; document.head.appendChild(s2); }
+    };
+    document.head.appendChild(s);
+  }
+  load('https://unpkg.com/docx@8.5.0/build/index.js', function () {
+    if (!window.docx && typeof docx !== 'undefined') window.docx = docx;
+    window.__docxReady = !!window.docx;
+  }, 'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js');
+})();
+</script>
+
+<style>
+:root{
+  --bg:#070b16; --bg2:#0b1124; --bg3:#0f1730;
+  --teal:#00d4aa; --teal2:#00a882; --blue:#3b82f6; --navy:#14304a;
+  --text:#dbe4f5; --text2:#7488ad; --muted:#56688c;
+  --border:rgba(0,212,170,.18); --border2:rgba(120,150,200,.12);
+  --glass:rgba(11,17,36,.72); --amber:#ffb86c;
+  --mono:'SFMono-Regular',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text); font-family:var(--sans);
+  min-height:100vh; overflow-x:hidden; line-height:1.5;
+  background-image:
+    radial-gradient(900px 500px at 12% -10%, rgba(0,212,170,.10), transparent 60%),
+    radial-gradient(800px 500px at 110% 0%, rgba(59,130,246,.10), transparent 55%),
+    linear-gradient(rgba(120,150,200,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,150,200,.025) 1px, transparent 1px);
+  background-size:auto,auto,44px 44px,44px 44px;
+}
+
+.wrap{max-width:1180px; margin:0 auto; padding:34px 24px 80px}
+
+/* ── HEADER ── */
+header{display:flex; align-items:center; gap:16px; margin-bottom:30px}
+.logo{
+  width:46px; height:46px; flex-shrink:0;
+  background:linear-gradient(135deg,var(--teal),var(--blue));
+  clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--mono); font-weight:700; font-size:13px; color:#05121b;
+}
+header h1{font-size:19px; font-weight:700; letter-spacing:-.2px}
+header h1 span{color:var(--teal)}
+header p{font-size:12.5px; color:var(--text2); margin-top:2px}
+.badge{
+  margin-left:auto; font-family:var(--mono); font-size:10.5px; letter-spacing:1px;
+  padding:6px 12px; border-radius:20px; border:1px solid var(--border);
+  color:var(--teal); background:rgba(0,212,170,.05); white-space:nowrap;
+}
+.badge.off{color:var(--amber); border-color:rgba(255,184,108,.3); background:rgba(255,184,108,.05)}
+
+/* ── LAYOUT ── */
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:22px; align-items:start}
+@media(max-width:880px){.grid{grid-template-columns:1fr}}
+
+.card{
+  background:var(--glass); border:1px solid var(--border2); border-radius:18px;
+  padding:24px; backdrop-filter:blur(10px);
+}
+.card h2{
+  font-family:var(--mono); font-size:11px; letter-spacing:2px; text-transform:uppercase;
+  color:var(--text2); margin-bottom:16px; display:flex; align-items:center; gap:8px;
+}
+.card h2 .n{
+  width:20px;height:20px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;
+  background:rgba(0,212,170,.12); color:var(--teal); font-size:11px;
+}
+
+/* ── DROP ZONE ── */
+.drop{
+  border:2px dashed var(--border); border-radius:16px; padding:42px 22px; text-align:center;
+  cursor:pointer; transition:.2s; background:rgba(0,212,170,.02);
+}
+.drop:hover,.drop.over{border-color:var(--teal); background:rgba(0,212,170,.06); transform:translateY(-1px)}
+.drop .ico{font-size:34px; margin-bottom:10px; filter:grayscale(.1)}
+.drop b{display:block; font-size:14.5px; margin-bottom:4px}
+.drop small{color:var(--text2); font-size:12px}
+.drop.loaded{border-style:solid; border-color:var(--teal2); background:rgba(0,212,170,.05)}
+
+.filemeta{margin-top:14px; display:none; gap:10px; flex-direction:column}
+.filemeta.show{display:flex}
+.fm-row{
+  display:flex; align-items:center; gap:10px; font-size:12.5px;
+  padding:9px 12px; border-radius:10px; background:rgba(120,150,200,.05); border:1px solid var(--border2);
+}
+.fm-row .k{color:var(--text2); font-family:var(--mono); font-size:10.5px; letter-spacing:.5px; min-width:96px}
+.fm-row .v{color:var(--text); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.fm-row .v.ok{color:var(--teal)}
+
+/* ── OPTIONS ── */
+.opt{display:flex; align-items:flex-start; gap:11px; padding:11px 0; border-bottom:1px solid var(--border2)}
+.opt:last-child{border-bottom:none}
+.opt input{appearance:none; width:38px; height:21px; border-radius:20px; background:rgba(120,150,200,.18);
+  position:relative; cursor:pointer; flex-shrink:0; transition:.2s; margin-top:1px}
+.opt input:checked{background:var(--teal2)}
+.opt input::after{content:''; position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%;
+  background:#fff; transition:.2s}
+.opt input:checked::after{transform:translateX(17px)}
+.opt label{cursor:pointer; flex:1}
+.opt .t{font-size:13.5px; font-weight:600; display:block}
+.opt .d{font-size:11.5px; color:var(--text2); margin-top:2px; line-height:1.45}
+
+.field{margin-top:14px}
+.field label{display:block; font-family:var(--mono); font-size:10px; letter-spacing:1px; text-transform:uppercase;
+  color:var(--text2); margin-bottom:7px}
+.field input,.field select{
+  width:100%; background:var(--bg2); border:1px solid var(--border2); border-radius:10px;
+  padding:11px 13px; color:var(--text); font-family:var(--sans); font-size:13px; outline:none; transition:.15s;
+}
+.field input:focus,.field select:focus{border-color:var(--teal); box-shadow:0 0 0 3px rgba(0,212,170,.08)}
+.swatches{display:flex; gap:9px; margin-top:9px; flex-wrap:wrap}
+.sw{width:34px; height:34px; border-radius:9px; cursor:pointer; border:2px solid transparent; transition:.15s; position:relative}
+.sw.sel{border-color:#fff; transform:scale(1.06)}
+.sw.sel::after{content:'✓'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  color:#fff; font-size:13px; text-shadow:0 1px 3px rgba(0,0,0,.5)}
+
+/* ── GENERATE BTN ── */
+.gen{
+  margin-top:20px; width:100%; padding:15px; border:none; border-radius:13px; cursor:pointer;
+  background:linear-gradient(135deg,var(--teal),var(--teal2)); color:#05121b;
+  font-family:var(--mono); font-size:13px; font-weight:700; letter-spacing:1.5px;
+  transition:.18s; box-shadow:0 8px 24px rgba(0,212,170,.22);
+}
+.gen:hover:not(:disabled){transform:translateY(-2px); box-shadow:0 12px 30px rgba(0,212,170,.32)}
+.gen:active{transform:translateY(0)}
+.gen:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
+.gen.busy{pointer-events:none}
+
+.hint{margin-top:12px; font-size:11.5px; color:var(--muted); text-align:center; line-height:1.5}
+
+/* ── PREVIEW ── */
+.previewCard{min-height:380px; display:flex; flex-direction:column}
+.pv-head{display:flex; align-items:center; gap:10px; margin-bottom:14px}
+.pv-stat{margin-left:auto; display:flex; gap:7px; flex-wrap:wrap}
+.chip{font-family:var(--mono); font-size:10px; letter-spacing:.5px; padding:4px 9px; border-radius:20px;
+  background:rgba(120,150,200,.08); color:var(--text2); border:1px solid var(--border2)}
+.chip b{color:var(--teal)}
+.preview{
+  flex:1; background:#fff; border-radius:12px; overflow:auto; max-height:560px;
+  padding:30px 32px; color:#1f2733; font-size:12.5px; line-height:1.6;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.04);
+}
+.preview .ph{color:#98a4b6; text-align:center; padding:90px 20px; font-style:italic}
+/* light-theme rendering of extracted doc */
+.preview h2{font-size:18px; color:#0c2740; border-bottom:2px solid #d9e2ec; padding-bottom:8px; margin:6px 0 14px}
+.preview h3{font-size:15px; color:#0f5c54; margin:20px 0 9px; padding-left:10px; border-left:3px solid #00a882}
+.preview h4{font-size:13px; color:#23405e; margin:14px 0 6px}
+.preview p{margin:7px 0}
+.preview strong{color:#15324d}
+.preview hr{border:none; border-top:1px solid #e4eaf1; margin:16px 0}
+.preview ul{margin:8px 0 8px 6px; padding-left:18px}
+.preview li{margin:4px 0}
+.preview table{border-collapse:collapse; width:100%; margin:12px 0; font-size:11px}
+.preview th{background:#14304a; color:#fff; padding:7px 9px; text-align:left; font-weight:600; border:1px solid #0d2236}
+.preview td{padding:6px 9px; border:1px solid #dde5ee; vertical-align:top}
+.preview tr:nth-child(even) td{background:#f4f8fb}
+.preview .doc-todo,.preview .doc-todo *{background:#fff3cd; color:#8a6d00 !important; padding:1px 4px; border-radius:3px; font-style:italic}
+
+/* ── TOAST ── */
+.toast{position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(120px);
+  background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:13px 22px; border-radius:12px;
+  font-size:13px; box-shadow:0 12px 40px rgba(0,0,0,.5); transition:.32s cubic-bezier(.2,.9,.3,1.2); z-index:90; max-width:90vw}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.ok{border-color:var(--teal)}
+.toast.err{border-color:#ff5c7a}
+
+/* ── overlay spinner ── */
+.busyOverlay{position:fixed; inset:0; background:rgba(7,11,22,.78); backdrop-filter:blur(4px);
+  display:none; align-items:center; justify-content:center; flex-direction:column; gap:18px; z-index:80}
+.busyOverlay.show{display:flex}
+.spin{width:52px; height:52px; border-radius:50%; border:3px solid rgba(0,212,170,.15); border-top-color:var(--teal);
+  animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.busyOverlay .lbl{font-family:var(--mono); font-size:12px; letter-spacing:2px; color:var(--teal)}
+
+footer{margin-top:36px; text-align:center; font-size:11.5px; color:var(--muted); line-height:1.7}
+footer code{font-family:var(--mono); color:var(--text2)}
+a{color:var(--teal); text-decoration:none}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="logo">PA</div>
+    <div>
+      <h1>ProcessAI <span>→</span> Word</h1>
+      <p>Генератор професійних документів Word із HTML-результатів демо-рішення</p>
+    </div>
+    <div class="badge" id="libBadge">⟳ Завантаження docx…</div>
+  </header>
+
+  <div class="grid">
+
+    <!-- LEFT: input + options -->
+    <div>
+      <div class="card">
+        <h2><span class="n">1</span> Джерело — HTML файл</h2>
+
+        <div class="drop" id="drop">
+          <div class="ico">📥</div>
+          <b>Перетягніть HTML сюди або натисніть</b>
+          <small>Результат роботи ProcessAI · Farmak BPM · .html / .htm</small>
+        </div>
+        <input type="file" id="file" accept=".html,.htm,text/html" style="display:none">
+
+        <div class="filemeta" id="filemeta">
+          <div class="fm-row"><span class="k">Файл</span><span class="v" id="mFile">—</span></div>
+          <div class="fm-row"><span class="k">Документ</span><span class="v" id="mTitle">—</span></div>
+          <div class="fm-row"><span class="k">Тип</span><span class="v" id="mType">—</span></div>
+          <div class="fm-row"><span class="k">Знайдено</span><span class="v ok" id="mFound">—</span></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:22px">
+        <h2><span class="n">2</span> Оформлення та опції</h2>
+
+        <div class="opt">
+          <input type="checkbox" id="optCover" checked>
+          <label for="optCover"><span class="t">Титульна сторінка</span>
+            <span class="d">Брендована обкладинка з назвою процесу, версією, грифом і датою.</span></label>
+        </div>
+        <div class="opt">
+          <input type="checkbox" id="optToc" checked>
+          <label for="optToc"><span class="t">Зміст (Table of Contents)</span>
+            <span class="d">Автозміст Word — оновлюється через F9 / «Оновити поле».</span></label>
+        </div>
+        <div class="opt">
+          <input type="checkbox" id="optHeader" checked>
+          <label for="optHeader"><span class="t">Колонтитули та нумерація</span>
+            <span class="d">Верхній колонтитул з назвою, нижній — гриф, компанія та номер сторінки.</span></label>
+        </div>
+        <div class="opt">
+          <input type="checkbox" id="optZebra" checked>
+          <label for="optZebra"><span class="t">Стилізовані таблиці</span>
+            <span class="d">Кольорові заголовки, чергування рядків, кольорове кодування RACI (R/A/C/I).</span></label>
+        </div>
+        <div class="opt">
+          <input type="checkbox" id="optTranscript">
+          <label for="optTranscript"><span class="t">Додаток: транскрипт інтерв'ю</span>
+            <span class="d">Додати наприкінці повний діалог асистент ↔ учасник (якщо є у файлі).</span></label>
+        </div>
+
+        <div class="field">
+          <label>Компанія / організація</label>
+          <input type="text" id="optCompany" value="АТ «Фармак»">
+        </div>
+        <div class="field">
+          <label>Гриф конфіденційності</label>
+          <select id="optConf">
+            <option>Конфіденційно</option>
+            <option>Для внутрішнього використання</option>
+            <option>Комерційна таємниця</option>
+            <option value="">— без грифа —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Акцентний колір бренду</label>
+          <div class="swatches" id="swatches"></div>
+        </div>
+
+        <button class="gen" id="gen" disabled>↓ ЗГЕНЕРУВАТИ WORD (.DOCX)</button>
+        <div class="hint" id="hint">Спочатку завантажте HTML-файл</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: preview -->
+    <div class="card previewCard">
+      <div class="pv-head">
+        <h2 style="margin:0"><span class="n">3</span> Попередній перегляд</h2>
+        <div class="pv-stat" id="pvStat"></div>
+      </div>
+      <div class="preview" id="preview">
+        <div class="ph">Тут з'явиться вміст майбутнього документа<br>після завантаження HTML-файлу</div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    Працює повністю у браузері — жоден файл не залишає ваш пристрій.<br>
+    Формат на виході: <code>.docx</code> (Microsoft Word / Google Docs / LibreOffice). Бібліотека: <code>docx 8.5</code>.
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="busyOverlay" id="busy"><div class="spin"></div><div class="lbl" id="busyLbl">ФОРМУВАННЯ ДОКУМЕНТА…</div></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+//  ProcessAI → Word    ·    HTML-результат  ⇒  професійний .docx
+// ════════════════════════════════════════════════════════════════
+
+const PALETTES = [
+  { id:'teal',   accent:'00A88A', dark:'0C2C45', name:'Фармак Teal' },
+  { id:'navy',   accent:'1A6FB0', dark:'10243A', name:'Корпоративний' },
+  { id:'green',  accent:'2E8B57', dark:'14331F', name:'Pharma Green' },
+  { id:'violet', accent:'6C4AB6', dark:'241640', name:'Аметист' },
+  { id:'slate',  accent:'46627F', dark:'1E2A38', name:'Графіт' },
+];
+let palette = PALETTES[0];
+
+// ── extracted state ──
+let parsedDoc   = null;   // the #docView Element (clone)
+let docTitle    = '';
+let docTypeTxt  = '';
+let modelTxt    = '';
+let processName = '';
+let transcript  = [];     // [{role:'ai'|'user', text}]
+let srcFileName = '';
+
+// ── DOM refs ──
+const $ = id => document.getElementById(id);
+const drop = $('drop'), fileInput = $('file');
+
+// ── library badge ──
+(function pollLib(){
+  if (window.docx) { $('libBadge').textContent = '✓ docx готовий'; $('libBadge').classList.remove('off'); refreshGenState(); }
+  else { $('libBadge').textContent = '⟳ Завантаження docx…'; $('libBadge').classList.add('off'); setTimeout(pollLib, 250); }
+})();
+
+// ── palette swatches ──
+const sw = $('swatches');
+PALETTES.forEach((p,i)=>{
+  const el = document.createElement('div');
+  el.className = 'sw' + (i===0?' sel':''); el.style.background = '#'+p.accent; el.title = p.name;
+  el.onclick = ()=>{ palette = p; [...sw.children].forEach(c=>c.classList.remove('sel')); el.classList.add('sel'); };
+  sw.appendChild(el);
+});
+
+// ── toast ──
+let toastT;
+function toast(msg, kind){
+  const t = $('toast'); t.textContent = msg; t.className = 'toast show ' + (kind||'');
+  clearTimeout(toastT); toastT = setTimeout(()=>t.className='toast', 3200);
+}
+
+// ── file input wiring ──
+drop.onclick = ()=> fileInput.click();
+fileInput.onchange = e => { if (e.target.files[0]) readFile(e.target.files[0]); };
+['dragenter','dragover'].forEach(ev=> drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev=> drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e=>{
+  const f = e.dataTransfer.files[0];
+  if (f) readFile(f);
+});
+
+function readFile(file){
+  if (!/\.html?$/i.test(file.name)){ toast('Потрібен HTML-файл (.html)', 'err'); return; }
+  srcFileName = file.name;
+  const r = new FileReader();
+  r.onload = e => { try { extract(e.target.result); } catch(err){ console.error(err); toast('Помилка читання: '+err.message,'err'); } };
+  r.onerror = ()=> toast('Не вдалося прочитати файл','err');
+  r.readAsText(file, 'UTF-8');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  EXTRACTION  — robust across "similar but not identical" files
+// ════════════════════════════════════════════════════════════════
+function extract(htmlString){
+  const dom = new DOMParser().parseFromString(htmlString, 'text/html');
+
+  // 1) Find the generated document container.
+  //    Primary: #docView. Fallbacks: the densest container of doc-* nodes.
+  let node = dom.getElementById('docView');
+  if (!node || !node.textContent.trim()){
+    node = findDensestDocContainer(dom);
+  }
+  if (!node || !node.textContent.trim()){
+    toast('У файлі не знайдено згенерований документ', 'err');
+    return;
+  }
+  parsedDoc = node.cloneNode(true);
+
+  // 2) Metadata (each with graceful fallback)
+  const h2 = parsedDoc.querySelector('h2.doc-h2, h2');
+  docTitle = clean(h2 ? h2.textContent : '') ||
+             clean(text(dom,'#processBadge')) ||
+             clean(text(dom,'title')) || 'Документ';
+
+  docTypeTxt = clean(text(dom,'.result-header h3'))
+                 .replace(/^[^\wА-Яа-яІіЇїЄє]+/, '') || 'Бізнес-процедура';
+  modelTxt   = clean(text(dom,'#resultModelBadge')) || '';
+  processName= clean(text(dom,'#processBadge')) || stripPrefix(docTitle);
+
+  // 3) Transcript (optional appendix)
+  transcript = [];
+  dom.querySelectorAll('#messages .msg').forEach(m=>{
+    const role = m.classList.contains('user') ? 'user' : 'ai';
+    const bubble = m.querySelector('.msg-bubble');
+    const txt = clean(bubble ? bubble.textContent : m.textContent);
+    if (txt) transcript.push({ role, text: txt });
+  });
+
+  // 4) Update UI
+  $('mFile').textContent  = srcFileName;
+  $('mTitle').textContent = docTitle;
+  $('mType').textContent  = docTypeTxt + (modelTxt ? '  ·  '+modelTxt : '');
+  const sections = parsedDoc.querySelectorAll('h3,h2').length;
+  const tables   = parsedDoc.querySelectorAll('table').length;
+  $('mFound').textContent = `${sections} розділів · ${tables} таблиць` + (transcript.length?` · ${transcript.length} реплік`:'');
+  $('filemeta').classList.add('show');
+  drop.classList.add('loaded');
+  drop.querySelector('b').textContent = '✓ ' + srcFileName;
+  drop.querySelector('small').textContent = 'Файл завантажено — можна генерувати або обрати інший';
+
+  renderPreview();
+  refreshGenState();
+  $('optTranscript').parentElement.style.opacity = transcript.length ? '1' : '.4';
+  toast('Документ розпізнано ✓', 'ok');
+}
+
+function findDensestDocContainer(dom){
+  // pick the element holding the most doc-* / heading / table descendants
+  const candidates = dom.querySelectorAll('div,article,section,main');
+  let best=null, bestScore=0;
+  candidates.forEach(el=>{
+    const score = el.querySelectorAll('h2,h3,h4,table,.doc-h3,.doc-h2,.doc-table').length;
+    // prefer the smallest container that still has the bulk (avoid <body>)
+    if (score>bestScore){ bestScore=score; best=el; }
+  });
+  return bestScore>=2 ? best : null;
+}
+
+const text = (root,sel)=>{ const e=root.querySelector(sel); return e?e.textContent:''; };
+const clean = s => (s||'').replace(/\s+/g,' ').trim();
+const stripPrefix = s => s.replace(/^(ПРОЦЕДУРА|РЕГЛАМЕНТ|ПОЛОЖЕННЯ|СОП|ДОКУМЕНТ)\s*[:—-]\s*/i,'').trim();
+
+// ── live preview (light theme) ──
+function renderPreview(){
+  const pv = $('preview');
+  pv.innerHTML = '';
+  pv.appendChild(parsedDoc.cloneNode(true));
+  const st = $('pvStat'); st.innerHTML = '';
+  const add = (l,v)=>{ const c=document.createElement('span'); c.className='chip'; c.innerHTML=l+' <b>'+v+'</b>'; st.appendChild(c); };
+  add('Розділів', parsedDoc.querySelectorAll('h3,h2').length);
+  add('Таблиць', parsedDoc.querySelectorAll('table').length);
+  const todos = parsedDoc.querySelectorAll('.doc-todo').length + (parsedDoc.innerHTML.match(/потребує уточнення/gi)||[]).length;
+  if (todos) add('Уточнити', todos);
+}
+
+function refreshGenState(){
+  const ok = !!parsedDoc && !!window.docx;
+  $('gen').disabled = !ok;
+  $('hint').textContent = !window.docx ? 'Очікування бібліотеки docx…'
+                        : !parsedDoc  ? 'Спочатку завантажте HTML-файл'
+                        : 'Готово до генерації — натисніть кнопку вище';
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DOCX GENERATION
+// ════════════════════════════════════════════════════════════════
+$('gen').onclick = generate;
+
+function generate(){
+  if (!parsedDoc || !window.docx){ toast('Не готово','err'); return; }
+  const btn = $('gen'); btn.classList.add('busy'); $('busy').classList.add('show');
+
+  // let the overlay paint before the (sync-ish) heavy work
+  setTimeout(()=>{ try { buildDocx(); } catch(err){ console.error(err); toast('Помилка генерації: '+err.message,'err'); }
+                   finally { btn.classList.remove('busy'); $('busy').classList.remove('show'); } }, 60);
+}
+
+function buildDocx(){
+  const D = window.docx;
+  const {
+    Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+    LevelFormat, BorderStyle, WidthType, Table, TableRow, TableCell,
+    ShadingType, VerticalAlign, Header, Footer, PageNumber, TableOfContents,
+    TabStopType, TabStopPosition, ExternalHyperlink
+  } = D;
+
+  const ACCENT = palette.accent;     // hex no #
+  const DARK   = palette.dark;
+  const GRAY   = '5A6675';
+  const LIGHT  = 'F3F7FA';
+  const todoBg = 'FFF3CD';
+  const BODY_FONT = 'Calibri', HEAD_FONT = 'Calibri';
+  const company  = $('optCompany').value.trim();
+  const conf     = $('optConf').value.trim();
+  const today    = new Date().toLocaleDateString('uk-UA',{day:'2-digit',month:'long',year:'numeric'});
+
+  const wantCover = $('optCover').checked, wantToc = $('optToc').checked,
+        wantHF = $('optHeader').checked, styleTables = $('optZebra').checked,
+        wantTrans = $('optTranscript').checked && transcript.length;
+
+  // ── inline run builders ───────────────────────────────────────
+  function runsFrom(node, base){
+    base = base || {};
+    const out = [];
+    node.childNodes.forEach(ch=>{
+      if (ch.nodeType === 3){ // text
+        const t = ch.textContent.replace(/\s+/g,' ');
+        if (t.trim()==='' && out.length===0) return;
+        if (t) out.push(mkRun(t, base, ch.parentNode));
+      } else if (ch.nodeType === 1){
+        const tag = ch.tagName.toLowerCase();
+        const cls = ch.className || '';
+        const st = Object.assign({}, base);
+        if (tag==='strong'||tag==='b'|| /doc-bold/.test(cls)) st.bold = true;
+        if (tag==='em'||tag==='i') st.italics = true;
+        if (/doc-todo/.test(cls)){ st.todo = true; }
+        if (/doc-onum/.test(cls)){ st.bold = true; st.color = ACCENT; }
+        // recurse
+        const inner = runsFrom(ch, st);
+        if (inner.length) out.push(...inner);
+        else { const txt = clean(ch.textContent); if (txt) out.push(mkRun(txt, st, ch)); }
+      }
+    });
+    return out;
+  }
+  function mkRun(textVal, st, ownerNode){
+    st = st || {};
+    const isPlaceholder = /^\s*\[потребує уточнення/i.test(textVal);
+    const opts = {
+      text: textVal,
+      font: BODY_FONT,
+      size: st.size || 21,
+      bold: !!st.bold,
+      italics: !!st.italics || (isPlaceholder && !st.todo),
+    };
+    if (st.todo){ opts.highlight = 'yellow'; opts.color = '8A6D00'; opts.italics = true; }
+    else if (isPlaceholder){ opts.color = GRAY; }
+    else if (st.color){ opts.color = st.color; }
+    return new TextRun(opts);
+  }
+  function splitByBr(parent){
+    const lines = [[]];
+    parent.childNodes.forEach(n=>{
+      if (n.nodeType===1 && n.tagName.toLowerCase()==='br') lines.push([]);
+      else lines[lines.length-1].push(n);
+    });
+    return lines;
+  }
+  function runsFromNodes(nodes, base){
+    const frag = document.createElement('span');
+    nodes.forEach(n=> frag.appendChild(n.cloneNode(true)));
+    return runsFrom(frag, base);
+  }
+
+  // ── block builders ────────────────────────────────────────────
+  const body = [];
+
+  function hr(){ return new Paragraph({ spacing:{before:60,after:60},
+    border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:'D7DEE6' } }, children:[] }); }
+
+  function heading(el){
+    const tag = el.tagName.toLowerCase();
+    const txt = clean(el.textContent);
+    if (tag==='h2'){
+      return new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing:{ before:120, after:140 },
+        border:{ bottom:{ style:BorderStyle.SINGLE, size:14, color:ACCENT } },
+        children:[ new TextRun({ text: txt, bold:true, size:34, font:HEAD_FONT, color:DARK }) ]
+      });
+    }
+    if (tag==='h3'){
+      return new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        spacing:{ before:300, after:90 },
+        children:[ new TextRun({ text: txt, bold:true, size:26, font:HEAD_FONT, color:ACCENT }) ]
+      });
+    }
+    // h4
+    return new Paragraph({
+      heading: HeadingLevel.HEADING_3,
+      spacing:{ before:160, after:50 },
+      children:[ new TextRun({ text: txt, bold:true, size:22, font:HEAD_FONT, color:DARK }) ]
+    });
+  }
+
+  function paragraph(el){
+    // split on <br> into separate lines for clean field-lists
+    const lines = splitByBr(el);
+    const paras = [];
+    lines.forEach((nodes, idx)=>{
+      const runs = runsFromNodes(nodes, {});
+      if (!runs.length) return;
+      paras.push(new Paragraph({
+        spacing:{ after: idx===lines.length-1 ? 100 : 30, line: 276 },
+        children: runs
+      }));
+    });
+    return paras;
+  }
+
+  function list(ul){
+    const items = [];
+    ul.querySelectorAll(':scope > li').forEach(li=>{
+      const ordered = /doc-oli/.test(li.className || '');
+      // strip the manual number span for ordered, we keep visual via accent bullet text
+      const runs = runsFrom(li, {});
+      if (!runs.length) return;
+      items.push(new Paragraph({
+        numbering: { reference: ordered ? 'doc-num' : 'doc-bul', level:0 },
+        spacing:{ after:50, line:264 },
+        children: runs.filter(r=>r) // onum already styled
+      }));
+    });
+    return items;
+  }
+
+  function buildTable(tbl){
+    const rows = [...tbl.querySelectorAll('tr')];
+    if (!rows.length) return null;
+    const colCount = Math.max(...rows.map(r=> r.children.length));
+    const dense = colCount >= 7;
+    const cellFont = dense ? 15 : 18;
+    const thin = { style:BorderStyle.SINGLE, size:3, color:'C9D4DF' };
+    const cellBorders = { top:thin,bottom:thin,left:thin,right:thin };
+
+    const trEls = rows.map((tr, ri)=>{
+      const isHead = ri===0 && tr.querySelector('th');
+      const zebra = styleTables && !isHead && (ri % 2 === 0);
+      const cells = [...tr.children].map(td=>{
+        const raw = clean(td.textContent);
+        const runs = buildCellRuns(td, isHead, cellFont, raw);
+        const fill = isHead ? DARK : (zebra ? LIGHT : 'FFFFFF');
+        return new TableCell({
+          borders: cellBorders,
+          shading: { type:ShadingType.CLEAR, color:'auto', fill },
+          margins:{ top:40, bottom:40, left:90, right:90 },
+          verticalAlign: VerticalAlign.CENTER,
+          children:[ new Paragraph({
+            alignment: (isHead || /^([RACI](\s*\/\s*[RACI])*|[№\d]+|[✓×])$/.test(raw)) ? AlignmentType.CENTER : AlignmentType.LEFT,
+            spacing:{ after:0, line:240 },
+            children: runs
+          }) ]
+        });
+      });
+      return new TableRow({ children: cells, tableHeader: isHead, cantSplit: true });
+    });
+
+    return new Table({
+      width:{ size:100, type:WidthType.PERCENTAGE },
+      borders: cellBorders,
+      rows: trEls
+    });
+  }
+  function buildCellRuns(td, isHead, size, raw){
+    if (isHead){
+      return [ new TextRun({ text: raw, bold:true, color:'FFFFFF', size, font:BODY_FONT }) ];
+    }
+    // RACI colour coding for short letter cells
+    if (styleTables && /^[RACI](\s*\/\s*[RACI])*$/.test(raw)){
+      const colorMap = { R:'1E8E3E', A:'C0392B', C:'B8860B', I:'5A6675' };
+      const runs = [];
+      raw.split(/(\s*\/\s*)/).forEach(part=>{
+        if (/^[RACI]$/.test(part.trim())) runs.push(new TextRun({ text:part, bold:true, size, font:BODY_FONT, color: colorMap[part.trim()] }));
+        else runs.push(new TextRun({ text:part, size, font:BODY_FONT, color:GRAY }));
+      });
+      return runs;
+    }
+    const r = runsFrom(td, { size });
+    return r.length ? r : [ new TextRun({ text: raw, size, font:BODY_FONT }) ];
+  }
+
+  // ── walk the docView in order ─────────────────────────────────
+  const skipTitle = true; // we render title on cover / first heading
+  let firstH2done = false;
+  [...parsedDoc.children].forEach(el=> walk(el));
+  // also catch stray top-level text nodes (e.g. "Легенда:", "Передача результатів…")
+  function walk(el){
+    if (el.nodeType === 3){
+      const t = clean(el.textContent);
+      if (t) body.push(new Paragraph({ spacing:{after:80}, children:[ new TextRun({ text:t, font:BODY_FONT, size:21 }) ] }));
+      return;
+    }
+    if (el.nodeType !== 1) return;
+    const tag = el.tagName.toLowerCase();
+    const cls = el.className || '';
+
+    if (tag==='h2'){
+      if (!firstH2done && wantCover){ firstH2done = true; return; } // already on cover
+      firstH2done = true; body.push(heading(el)); return;
+    }
+    if (tag==='h3' || tag==='h4'){ body.push(heading(el)); return; }
+    if (tag==='hr' || /doc-hr/.test(cls)){ body.push(hr()); return; }
+    if (tag==='p'){
+      if (!clean(el.textContent)){ return; }
+      paragraph(el).forEach(p=> body.push(p)); return;
+    }
+    if (tag==='ul' || tag==='ol'){ list(el).forEach(p=> body.push(p)); return; }
+    if (tag==='strong' || tag==='b'){
+      body.push(new Paragraph({ spacing:{before:60,after:60}, children: runsFrom(el, {bold:true}) })); return;
+    }
+    if (tag==='div' && (el.querySelector(':scope > table') || /doc-table-wrap/.test(cls))){
+      const t = el.querySelector('table'); if (t){ const tb = buildTable(t); if (tb){ body.push(tb); body.push(new Paragraph({spacing:{after:80},children:[]})); } }
+      return;
+    }
+    if (tag==='table'){ const tb=buildTable(el); if(tb){ body.push(tb); body.push(new Paragraph({spacing:{after:80},children:[]})); } return; }
+    if (tag==='br'){ return; }
+    // generic container — recurse
+    if (el.children && el.children.length){ [...el.childNodes].forEach(walk); return; }
+    const t = clean(el.textContent);
+    if (t) body.push(new Paragraph({ spacing:{after:80}, children:[ new TextRun({text:t,font:BODY_FONT,size:21}) ] }));
+  }
+
+  // ── COVER PAGE ────────────────────────────────────────────────
+  const coverChildren = [];
+  if (wantCover){
+    const PageBreak = D.PageBreak;
+    coverChildren.push(
+      new Paragraph({ spacing:{before:600}, children:[
+        new TextRun({ text: (company || 'ProcessAI').toUpperCase(), bold:true, size:20, color:ACCENT, font:HEAD_FONT, characterSpacing: 60 }) ]}),
+      new Paragraph({ spacing:{after:40},
+        border:{ bottom:{ style:BorderStyle.SINGLE, size:18, color:ACCENT } }, children:[] }),
+      new Paragraph({ spacing:{before:30}, children:[
+        new TextRun({ text:'Business Process Management', size:18, color:GRAY, font:HEAD_FONT, allCaps:false }) ]}),
+
+      new Paragraph({ spacing:{before:1700, after:120}, children:[
+        new TextRun({ text: docTypeTxt.toUpperCase(), size:22, bold:true, color:GRAY, font:HEAD_FONT, characterSpacing:40 }) ]}),
+      new Paragraph({ spacing:{after:200}, children:[
+        new TextRun({ text: stripPrefix(docTitle), size:54, bold:true, color:DARK, font:'Georgia' }) ]}),
+      new Paragraph({ children:[
+        new TextRun({ text: processName && processName!==stripPrefix(docTitle) ? processName : '', size:24, color:ACCENT, font:HEAD_FONT }) ]}),
+    );
+
+    // meta box as a borderless table
+    const metaRows = [
+      ['Документ', docTypeTxt],
+      ['Організація', company || '—'],
+      ['Версія', '1.0'],
+      ['Гриф', conf || '—'],
+      ['Дата формування', today],
+      ['Згенеровано', 'ProcessAI' + (modelTxt? '  ·  '+modelTxt : '')],
+    ].filter(r=> r[1] && r[1]!=='—' || r[0]==='Версія' || r[0]==='Дата формування');
+
+    const metaTable = new Table({
+      width:{ size:78, type:WidthType.PERCENTAGE },
+      borders:{ top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE},insideHorizontal:{style:BorderStyle.SINGLE,size:3,color:'E1E8EF'},insideVertical:{style:BorderStyle.NONE} },
+      rows: metaRows.map(([k,v])=> new TableRow({ children:[
+        new TableCell({ width:{size:38,type:WidthType.PERCENTAGE}, margins:{top:60,bottom:60,left:0,right:80}, borders:noBorders(BorderStyle),
+          children:[ new Paragraph({ children:[ new TextRun({ text:k.toUpperCase(), size:16, bold:true, color:GRAY, font:HEAD_FONT, characterSpacing:30 }) ] }) ] }),
+        new TableCell({ width:{size:62,type:WidthType.PERCENTAGE}, margins:{top:60,bottom:60,left:0,right:0}, borders:noBorders(BorderStyle),
+          children:[ new Paragraph({ children:[ new TextRun({ text:v, size:20, color:DARK, font:BODY_FONT }) ] }) ] }),
+      ] }))
+    });
+    coverChildren.push(new Paragraph({ spacing:{before:900,after:0}, children:[] }), metaTable);
+
+    if (conf){
+      coverChildren.push(new Paragraph({ spacing:{before:600}, children:[
+        new TextRun({ text:'⚑ '+conf.toUpperCase(), size:16, bold:true, color:'C0392B', font:HEAD_FONT, characterSpacing:40 }) ]}));
+    }
+    coverChildren.push(new Paragraph({ children:[ new D.PageBreak() ] }));
+  }
+
+  // ── TOC ───────────────────────────────────────────────────────
+  const tocChildren = [];
+  if (wantToc){
+    tocChildren.push(
+      new Paragraph({ spacing:{after:140}, children:[ new TextRun({ text:'ЗМІСТ', bold:true, size:30, color:DARK, font:HEAD_FONT }) ],
+        border:{ bottom:{ style:BorderStyle.SINGLE, size:14, color:ACCENT } } }),
+      new Paragraph({ spacing:{before:60} ,children:[] }),
+      new TableOfContents('Зміст', { hyperlink:true, headingStyleRange:'1-3' }),
+      new Paragraph({ children:[ new D.PageBreak() ] })
+    );
+  }
+
+  // ── transcript appendix ───────────────────────────────────────
+  const transChildren = [];
+  if (wantTrans){
+    transChildren.push(
+      new Paragraph({ children:[ new D.PageBreak() ] }),
+      new Paragraph({ heading:HeadingLevel.HEADING_1, spacing:{after:140},
+        border:{ bottom:{ style:BorderStyle.SINGLE, size:14, color:ACCENT } },
+        children:[ new TextRun({ text:'Додаток А. Транскрипт інтерв’ю', bold:true, size:34, color:DARK, font:HEAD_FONT }) ] })
+    );
+    transcript.forEach(m=>{
+      const who = m.role==='user' ? 'УЧАСНИК' : 'АНАЛІТИК';
+      const col = m.role==='user' ? DARK : ACCENT;
+      transChildren.push(new Paragraph({ spacing:{before:120, after:20}, children:[
+        new TextRun({ text: who, bold:true, size:16, color:col, font:HEAD_FONT, characterSpacing:30 }) ]}));
+      transChildren.push(new Paragraph({ spacing:{after:60, line:264},
+        indent:{ left:240 },
+        children:[ new TextRun({ text:m.text, size:20, font:BODY_FONT, color:'2B3540' }) ] }));
+    });
+  }
+
+  // ── header / footer ───────────────────────────────────────────
+  const headers = wantHF ? { default: new Header({ children:[
+      new Paragraph({ tabStops:[{ type:TabStopType.RIGHT, position: 9700 }],
+        border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:'D7DEE6' } },
+        spacing:{ after:80 },
+        children:[
+          new TextRun({ text: company || 'ProcessAI', bold:true, size:15, color:ACCENT, font:HEAD_FONT, characterSpacing:20 }),
+          new TextRun({ text:'\t'+clipText(docTitle, 60), size:15, color:GRAY, font:HEAD_FONT })
+        ] }) ] }) } : undefined;
+
+  const footers = wantHF ? { default: new Footer({ children:[
+      new Paragraph({ tabStops:[{ type:TabStopType.CENTER, position:4850 }, { type:TabStopType.RIGHT, position:9700 }],
+        border:{ top:{ style:BorderStyle.SINGLE, size:4, color:'D7DEE6' } },
+        spacing:{ before:60 },
+        children:[
+          new TextRun({ text: conf || (company||''), size:14, color:GRAY, font:HEAD_FONT }),
+          new TextRun({ text:'\t'+ (company||'ProcessAI'), size:14, color:GRAY, font:HEAD_FONT }),
+          new TextRun({ children:['\tСтор. ', PageNumber.CURRENT, ' / ', PageNumber.TOTAL_PAGES], size:14, color:GRAY, font:HEAD_FONT })
+        ] }) ] }) } : undefined;
+
+  // ── assemble sections ─────────────────────────────────────────
+  const sections = [];
+  const pageProps = { page:{ size:{ width:11906, height:16838 }, margin:{ top:1300, right:1100, bottom:1200, left:1300 } } };
+
+  if (wantCover){
+    sections.push({ properties:{ page:{ ...pageProps.page, margin:{ top:1500, right:1300, bottom:1300, left:1300 } } }, children: coverChildren });
+  }
+  sections.push({
+    properties: pageProps,
+    headers, footers,
+    children: [ ...tocChildren, ...body, ...transChildren ]
+  });
+
+  const doc = new Document({
+    creator:'ProcessAI', title: docTitle, description: docTypeTxt,
+    styles:{
+      default:{ document:{ run:{ font:BODY_FONT, size:21, color:'222A33' }, paragraph:{ spacing:{ line:276 } } } },
+      paragraphStyles:[
+        { id:'Heading1', name:'Heading 1', basedOn:'Normal', next:'Normal', quickFormat:true,
+          run:{ size:32, bold:true, font:HEAD_FONT, color:DARK }, paragraph:{ spacing:{before:240,after:120}, outlineLevel:0 } },
+        { id:'Heading2', name:'Heading 2', basedOn:'Normal', next:'Normal', quickFormat:true,
+          run:{ size:26, bold:true, font:HEAD_FONT, color:ACCENT }, paragraph:{ spacing:{before:240,after:80}, outlineLevel:1 } },
+        { id:'Heading3', name:'Heading 3', basedOn:'Normal', next:'Normal', quickFormat:true,
+          run:{ size:22, bold:true, font:HEAD_FONT, color:DARK }, paragraph:{ spacing:{before:160,after:50}, outlineLevel:2 } },
+      ]
+    },
+    numbering:{ config:[
+      { reference:'doc-bul', levels:[{ level:0, format:LevelFormat.BULLET, text:'▪', alignment:AlignmentType.LEFT,
+          style:{ paragraph:{ indent:{ left:560, hanging:260 } }, run:{ color:ACCENT, font:BODY_FONT } } }] },
+      { reference:'doc-num', levels:[{ level:0, format:LevelFormat.DECIMAL, text:'%1.', alignment:AlignmentType.LEFT,
+          style:{ paragraph:{ indent:{ left:560, hanging:300 } }, run:{ bold:true, color:ACCENT } } }] },
+    ]},
+    features:{ updateFields: wantToc },
+    sections
+  });
+
+  Packer.toBlob(doc).then(blob=>{
+    const base = (stripPrefix(docTitle) || 'ProcessAI_document')
+      .replace(/[^\wА-Яа-яІіЇїЄєҐґ0-9 _-]/g,'').replace(/\s+/g,'_').slice(0,70) || 'document';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = base + '.docx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=> URL.revokeObjectURL(a.href), 1500);
+    toast('✓ Word-документ завантажено', 'ok');
+  }).catch(err=>{ console.error(err); toast('Помилка пакування: '+err.message,'err'); });
+}
+
+function noBorders(BorderStyle){
+  const n={style:BorderStyle.NONE,size:0,color:'FFFFFF'};
+  return { top:n,bottom:n,left:n,right:n };
+}
+function clipText(s,n){ s=clean(s); return s.length>n ? s.slice(0,n-1)+'…' : s; }
+</script>
+</body>
+</html>
