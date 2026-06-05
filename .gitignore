@@ -1,0 +1,10 @@
+# Python / backend
+backend/.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node (test only)
+node_modules/
+package-lock.json
