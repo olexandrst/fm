@@ -3584,5 +3584,447 @@ function toast(msg, duration) {
   setTimeout(() => el.classList.remove('show'), duration || 3200);
 }
 </script>
+
+<!-- ════════════════════════════════════════════════════════════════
+     ProcessAI → Word  ·  Автоматична генерація професійного .docx
+     Додано наприкінці без зміни існуючої бізнес-логіки додатка.
+     Будує документ (титул, зміст, стилізовані таблиці, колонтитули)
+     безпосередньо з уже відрендереного вмісту #docView.
+     ════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+
+  // ── локальні утиліти (не конфліктують з основним скриптом) ──────────
+  const clean      = s => (s || '').replace(/\s+/g, ' ').trim();
+  const stripPrefix= s => clean(s).replace(/^(ПРОЦЕДУРА|РЕГЛАМЕНТ|ПОЛОЖЕННЯ|СОП|ДОКУМЕНТ|ІНСТРУКЦІЯ)\s*[:—-]\s*/i, '').trim();
+  const clipText   = (s, n) => { s = clean(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const noBorders  = BorderStyle => { const n = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' }; return { top: n, bottom: n, left: n, right: n }; };
+  const notify     = (m, kind) => { try { toast(m); } catch(_) {} };
+
+  // палітра бренду (Фармак Teal — як у генераторі-прототипі)
+  const palette = { accent: '00A88A', dark: '0C2C45' };
+
+  // ── 1. Зчитування джерела з «живого» DOM ───────────────────────────
+  function collectSource(){
+    const docView = document.getElementById('docView');
+    if (!docView || docView.style.display === 'none' || !docView.textContent.trim()) return null;
+
+    const node  = docView.cloneNode(true);
+    const text  = sel => { const e = document.querySelector(sel); return e ? e.textContent : ''; };
+
+    const h2       = node.querySelector('h2.doc-h2, h2');
+    const docTitle = clean(h2 ? h2.textContent : '') || clean(text('#processBadge')) || clean(document.title) || 'Документ';
+    const docTypeTxt = clean(text('.result-header h3')).replace(/^[^\wА-Яа-яІіЇїЄє]+/, '') || 'Бізнес-процедура';
+    const modelTxt   = clean(text('#resultModelBadge')).replace(/^[—\-]+$/, '') || '';
+    const processName= clean(text('#processBadge')) || stripPrefix(docTitle);
+
+    const transcript = [];
+    document.querySelectorAll('#messages .msg').forEach(m => {
+      const role   = m.classList.contains('user') ? 'user' : 'ai';
+      const bubble = m.querySelector('.msg-bubble');
+      const txt    = clean(bubble ? bubble.textContent : m.textContent);
+      if (txt) transcript.push({ role, text: txt });
+    });
+
+    return { node, docTitle, docTypeTxt, modelTxt, processName, transcript };
+  }
+
+  // ── 2. Побудова .docx (порт логіки ProcessAI-Word-Generator) ───────
+  function buildProfessionalDocx(opts){
+    const src = collectSource();
+    if (!src){ notify('⚠ Спочатку згенеруйте документ'); return; }
+
+    const D = window.docx || (typeof docx !== 'undefined' ? docx : null);
+    if (!D){ notify('⚠ DOCX бібліотека ще не завантажена. Спробуйте за мить.'); return; }
+
+    const {
+      Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+      LevelFormat, BorderStyle, WidthType, Table, TableRow, TableCell,
+      ShadingType, VerticalAlign, Header, Footer, PageNumber, TableOfContents,
+      TabStopType
+    } = D;
+
+    const ACCENT = palette.accent;
+    const DARK   = palette.dark;
+    const GRAY   = '5A6675';
+    const LIGHT  = 'F3F7FA';
+    const BODY_FONT = 'Calibri', HEAD_FONT = 'Calibri';
+
+    const company  = (opts && opts.company)  || 'АТ «Фармак»';
+    const conf     = (opts && opts.conf != null) ? opts.conf : 'Для внутрішнього використання';
+    const today    = new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: 'long', year: 'numeric' });
+
+    const wantCover = true, wantToc = true, wantHF = true, styleTables = true;
+    const wantTrans = !!(opts && opts.transcript) && src.transcript.length;
+
+    const { node: parsedDoc, docTitle, docTypeTxt, modelTxt, processName, transcript } = src;
+
+    // ── inline run builders ──────────────────────────────────────────
+    function runsFrom(node, base){
+      base = base || {};
+      const out = [];
+      node.childNodes.forEach(ch => {
+        if (ch.nodeType === 3){
+          const t = ch.textContent.replace(/\s+/g, ' ');
+          if (t.trim() === '' && out.length === 0) return;
+          if (t) out.push(mkRun(t, base));
+        } else if (ch.nodeType === 1){
+          const tag = ch.tagName.toLowerCase();
+          const cls = ch.className || '';
+          const st  = Object.assign({}, base);
+          if (tag === 'strong' || tag === 'b' || /doc-bold/.test(cls)) st.bold = true;
+          if (tag === 'em' || tag === 'i') st.italics = true;
+          if (/doc-todo/.test(cls)) st.todo = true;
+          if (/doc-onum/.test(cls)){ st.bold = true; st.color = ACCENT; }
+          const inner = runsFrom(ch, st);
+          if (inner.length) out.push(...inner);
+          else { const txt = clean(ch.textContent); if (txt) out.push(mkRun(txt, st)); }
+        }
+      });
+      return out;
+    }
+    function mkRun(textVal, st){
+      st = st || {};
+      const isPlaceholder = /^\s*\[?потребує уточнення/i.test(textVal) || /потребує уточнення/i.test(textVal);
+      const opts = {
+        text: textVal, font: BODY_FONT, size: st.size || 21,
+        bold: !!st.bold, italics: !!st.italics || (isPlaceholder && !st.todo)
+      };
+      if (st.todo){ opts.highlight = 'yellow'; opts.color = '8A6D00'; opts.italics = true; }
+      else if (isPlaceholder){ opts.color = GRAY; }
+      else if (st.color){ opts.color = st.color; }
+      return new TextRun(opts);
+    }
+    function splitByBr(parent){
+      const lines = [[]];
+      parent.childNodes.forEach(n => {
+        if (n.nodeType === 1 && n.tagName.toLowerCase() === 'br') lines.push([]);
+        else lines[lines.length - 1].push(n);
+      });
+      return lines;
+    }
+    function runsFromNodes(nodes, base){
+      const frag = document.createElement('span');
+      nodes.forEach(n => frag.appendChild(n.cloneNode(true)));
+      return runsFrom(frag, base);
+    }
+
+    // ── block builders ───────────────────────────────────────────────
+    const body = [];
+
+    function hr(){ return new Paragraph({ spacing: { before: 60, after: 60 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE6' } }, children: [] }); }
+
+    function heading(el){
+      const tag = el.tagName.toLowerCase();
+      const txt = clean(el.textContent);
+      if (tag === 'h2'){
+        return new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 120, after: 140 },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 14, color: ACCENT } },
+          children: [ new TextRun({ text: txt, bold: true, size: 34, font: HEAD_FONT, color: DARK }) ] });
+      }
+      if (tag === 'h3'){
+        return new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 90 },
+          children: [ new TextRun({ text: txt, bold: true, size: 26, font: HEAD_FONT, color: ACCENT }) ] });
+      }
+      return new Paragraph({ heading: HeadingLevel.HEADING_3, spacing: { before: 160, after: 50 },
+        children: [ new TextRun({ text: txt, bold: true, size: 22, font: HEAD_FONT, color: DARK }) ] });
+    }
+
+    function paragraph(el){
+      const lines = splitByBr(el);
+      const paras = [];
+      lines.forEach((nodes, idx) => {
+        const runs = runsFromNodes(nodes, {});
+        if (!runs.length) return;
+        paras.push(new Paragraph({ spacing: { after: idx === lines.length - 1 ? 100 : 30, line: 276 }, children: runs }));
+      });
+      return paras;
+    }
+
+    function list(ul){
+      const items = [];
+      ul.querySelectorAll(':scope > li').forEach(li => {
+        const ordered = /doc-oli/.test(li.className || '');
+        const runs = runsFrom(li, {});
+        if (!runs.length) return;
+        items.push(new Paragraph({
+          numbering: { reference: ordered ? 'pa-doc-num' : 'pa-doc-bul', level: 0 },
+          spacing: { after: 50, line: 264 }, children: runs }));
+      });
+      return items;
+    }
+
+    function buildTable(tbl){
+      const rows = [...tbl.querySelectorAll('tr')];
+      if (!rows.length) return null;
+      const colCount = Math.max(...rows.map(r => r.children.length));
+      const dense = colCount >= 7;
+      const cellFont = dense ? 15 : 18;
+      const thin = { style: BorderStyle.SINGLE, size: 3, color: 'C9D4DF' };
+      const cellBorders = { top: thin, bottom: thin, left: thin, right: thin };
+
+      const trEls = rows.map((tr, ri) => {
+        const isHead = ri === 0 && tr.querySelector('th');
+        const zebra  = styleTables && !isHead && (ri % 2 === 0);
+        const cells  = [...tr.children].map(td => {
+          const raw  = clean(td.textContent);
+          const runs = buildCellRuns(td, isHead, cellFont, raw);
+          const fill = isHead ? DARK : (zebra ? LIGHT : 'FFFFFF');
+          return new TableCell({
+            borders: cellBorders,
+            shading: { type: ShadingType.CLEAR, color: 'auto', fill },
+            margins: { top: 40, bottom: 40, left: 90, right: 90 },
+            verticalAlign: VerticalAlign.CENTER,
+            children: [ new Paragraph({
+              alignment: (isHead || /^([RACI](\s*\/\s*[RACI])*|[№\d]+|[✓×])$/.test(raw)) ? AlignmentType.CENTER : AlignmentType.LEFT,
+              spacing: { after: 0, line: 240 }, children: runs }) ]
+          });
+        });
+        return new TableRow({ children: cells, tableHeader: isHead, cantSplit: true });
+      });
+
+      return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: cellBorders, rows: trEls });
+    }
+    function buildCellRuns(td, isHead, size, raw){
+      if (isHead) return [ new TextRun({ text: raw, bold: true, color: 'FFFFFF', size, font: BODY_FONT }) ];
+      if (styleTables && /^[RACI](\s*\/\s*[RACI])*$/.test(raw)){
+        const colorMap = { R: '1E8E3E', A: 'C0392B', C: 'B8860B', I: '5A6675' };
+        const runs = [];
+        raw.split(/(\s*\/\s*)/).forEach(part => {
+          if (/^[RACI]$/.test(part.trim())) runs.push(new TextRun({ text: part, bold: true, size, font: BODY_FONT, color: colorMap[part.trim()] }));
+          else runs.push(new TextRun({ text: part, size, font: BODY_FONT, color: GRAY }));
+        });
+        return runs;
+      }
+      const r = runsFrom(td, { size });
+      return r.length ? r : [ new TextRun({ text: raw, size, font: BODY_FONT }) ];
+    }
+
+    // ── обхід #docView по порядку ─────────────────────────────────────
+    let firstH2done = false;
+    function walk(el){
+      if (el.nodeType === 3){
+        const t = clean(el.textContent);
+        if (t) body.push(new Paragraph({ spacing: { after: 80 }, children: [ new TextRun({ text: t, font: BODY_FONT, size: 21 }) ] }));
+        return;
+      }
+      if (el.nodeType !== 1) return;
+      const tag = el.tagName.toLowerCase();
+      const cls = el.className || '';
+
+      if (tag === 'h2'){
+        if (!firstH2done && wantCover){ firstH2done = true; return; }
+        firstH2done = true; body.push(heading(el)); return;
+      }
+      if (tag === 'h3' || tag === 'h4'){ body.push(heading(el)); return; }
+      if (tag === 'h5'){ body.push(heading(el)); return; }
+      if (tag === 'hr' || /doc-hr/.test(cls)){ body.push(hr()); return; }
+      if (tag === 'p'){ if (!clean(el.textContent)) return; paragraph(el).forEach(p => body.push(p)); return; }
+      if (tag === 'ul' || tag === 'ol'){ list(el).forEach(p => body.push(p)); return; }
+      if (tag === 'strong' || tag === 'b'){
+        body.push(new Paragraph({ spacing: { before: 60, after: 60 }, children: runsFrom(el, { bold: true }) })); return;
+      }
+      if (tag === 'div' && (el.querySelector(':scope > table') || /doc-table-wrap/.test(cls))){
+        const t = el.querySelector('table'); if (t){ const tb = buildTable(t); if (tb){ body.push(tb); body.push(new Paragraph({ spacing: { after: 80 }, children: [] })); } }
+        return;
+      }
+      if (tag === 'table'){ const tb = buildTable(el); if (tb){ body.push(tb); body.push(new Paragraph({ spacing: { after: 80 }, children: [] })); } return; }
+      if (tag === 'br'){ return; }
+      if (el.children && el.children.length){ [...el.childNodes].forEach(walk); return; }
+      const t = clean(el.textContent);
+      if (t) body.push(new Paragraph({ spacing: { after: 80 }, children: [ new TextRun({ text: t, font: BODY_FONT, size: 21 }) ] }));
+    }
+    [...parsedDoc.children].forEach(el => walk(el));
+
+    // ── ТИТУЛЬНА СТОРІНКА ─────────────────────────────────────────────
+    const coverChildren = [];
+    if (wantCover){
+      coverChildren.push(
+        new Paragraph({ spacing: { before: 600 }, children: [
+          new TextRun({ text: (company || 'ProcessAI').toUpperCase(), bold: true, size: 20, color: ACCENT, font: HEAD_FONT, characterSpacing: 60 }) ] }),
+        new Paragraph({ spacing: { after: 40 }, border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: ACCENT } }, children: [] }),
+        new Paragraph({ spacing: { before: 30 }, children: [
+          new TextRun({ text: 'Business Process Management', size: 18, color: GRAY, font: HEAD_FONT }) ] }),
+        new Paragraph({ spacing: { before: 1700, after: 120 }, children: [
+          new TextRun({ text: docTypeTxt.toUpperCase(), size: 22, bold: true, color: GRAY, font: HEAD_FONT, characterSpacing: 40 }) ] }),
+        new Paragraph({ spacing: { after: 200 }, children: [
+          new TextRun({ text: stripPrefix(docTitle), size: 54, bold: true, color: DARK, font: 'Georgia' }) ] }),
+        new Paragraph({ children: [
+          new TextRun({ text: processName && processName !== stripPrefix(docTitle) ? processName : '', size: 24, color: ACCENT, font: HEAD_FONT }) ] })
+      );
+
+      const metaRows = [
+        ['Документ', docTypeTxt],
+        ['Організація', company || '—'],
+        ['Версія', '1.0'],
+        ['Гриф', conf || '—'],
+        ['Дата формування', today],
+        ['Згенеровано', 'ProcessAI' + (modelTxt ? '  ·  ' + modelTxt : '')]
+      ].filter(r => (r[1] && r[1] !== '—') || r[0] === 'Версія' || r[0] === 'Дата формування');
+
+      const metaTable = new Table({
+        width: { size: 78, type: WidthType.PERCENTAGE },
+        borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.SINGLE, size: 3, color: 'E1E8EF' }, insideVertical: { style: BorderStyle.NONE } },
+        rows: metaRows.map(([k, v]) => new TableRow({ children: [
+          new TableCell({ width: { size: 38, type: WidthType.PERCENTAGE }, margins: { top: 60, bottom: 60, left: 0, right: 80 }, borders: noBorders(BorderStyle),
+            children: [ new Paragraph({ children: [ new TextRun({ text: k.toUpperCase(), size: 16, bold: true, color: GRAY, font: HEAD_FONT, characterSpacing: 30 }) ] }) ] }),
+          new TableCell({ width: { size: 62, type: WidthType.PERCENTAGE }, margins: { top: 60, bottom: 60, left: 0, right: 0 }, borders: noBorders(BorderStyle),
+            children: [ new Paragraph({ children: [ new TextRun({ text: v, size: 20, color: DARK, font: BODY_FONT }) ] }) ] })
+        ] }))
+      });
+      coverChildren.push(new Paragraph({ spacing: { before: 900, after: 0 }, children: [] }), metaTable);
+
+      if (conf){
+        coverChildren.push(new Paragraph({ spacing: { before: 600 }, children: [
+          new TextRun({ text: '⚑ ' + conf.toUpperCase(), size: 16, bold: true, color: 'C0392B', font: HEAD_FONT, characterSpacing: 40 }) ] }));
+      }
+      coverChildren.push(new Paragraph({ children: [ new D.PageBreak() ] }));
+    }
+
+    // ── ЗМІСТ ─────────────────────────────────────────────────────────
+    const tocChildren = [];
+    if (wantToc){
+      tocChildren.push(
+        new Paragraph({ spacing: { after: 140 }, children: [ new TextRun({ text: 'ЗМІСТ', bold: true, size: 30, color: DARK, font: HEAD_FONT }) ],
+          border: { bottom: { style: BorderStyle.SINGLE, size: 14, color: ACCENT } } }),
+        new Paragraph({ spacing: { before: 60 }, children: [] }),
+        new TableOfContents('Зміст', { hyperlink: true, headingStyleRange: '1-3' }),
+        new Paragraph({ children: [ new D.PageBreak() ] })
+      );
+    }
+
+    // ── ДОДАТОК: транскрипт ───────────────────────────────────────────
+    const transChildren = [];
+    if (wantTrans){
+      transChildren.push(
+        new Paragraph({ children: [ new D.PageBreak() ] }),
+        new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { after: 140 },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 14, color: ACCENT } },
+          children: [ new TextRun({ text: 'Додаток А. Транскрипт інтерв’ю', bold: true, size: 34, color: DARK, font: HEAD_FONT }) ] })
+      );
+      transcript.forEach(m => {
+        const who = m.role === 'user' ? 'УЧАСНИК' : 'АНАЛІТИК';
+        const col = m.role === 'user' ? DARK : ACCENT;
+        transChildren.push(new Paragraph({ spacing: { before: 120, after: 20 }, children: [
+          new TextRun({ text: who, bold: true, size: 16, color: col, font: HEAD_FONT, characterSpacing: 30 }) ] }));
+        transChildren.push(new Paragraph({ spacing: { after: 60, line: 264 }, indent: { left: 240 },
+          children: [ new TextRun({ text: m.text, size: 20, font: BODY_FONT, color: '2B3540' }) ] }));
+      });
+    }
+
+    // ── колонтитули ───────────────────────────────────────────────────
+    const headers = wantHF ? { default: new Header({ children: [
+        new Paragraph({ tabStops: [{ type: TabStopType.RIGHT, position: 9700 }],
+          border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE6' } }, spacing: { after: 80 },
+          children: [
+            new TextRun({ text: company || 'ProcessAI', bold: true, size: 15, color: ACCENT, font: HEAD_FONT, characterSpacing: 20 }),
+            new TextRun({ text: '\t' + clipText(docTitle, 60), size: 15, color: GRAY, font: HEAD_FONT })
+          ] }) ] }) } : undefined;
+
+    const footers = wantHF ? { default: new Footer({ children: [
+        new Paragraph({ tabStops: [{ type: TabStopType.CENTER, position: 4850 }, { type: TabStopType.RIGHT, position: 9700 }],
+          border: { top: { style: BorderStyle.SINGLE, size: 4, color: 'D7DEE6' } }, spacing: { before: 60 },
+          children: [
+            new TextRun({ text: conf || (company || ''), size: 14, color: GRAY, font: HEAD_FONT }),
+            new TextRun({ text: '\t' + (company || 'ProcessAI'), size: 14, color: GRAY, font: HEAD_FONT }),
+            new TextRun({ children: ['\tСтор. ', PageNumber.CURRENT, ' / ', PageNumber.TOTAL_PAGES], size: 14, color: GRAY, font: HEAD_FONT })
+          ] }) ] }) } : undefined;
+
+    // ── секції ────────────────────────────────────────────────────────
+    const sections = [];
+    const pageProps = { page: { size: { width: 11906, height: 16838 }, margin: { top: 1300, right: 1100, bottom: 1200, left: 1300 } } };
+
+    if (wantCover){
+      sections.push({ properties: { page: { ...pageProps.page, margin: { top: 1500, right: 1300, bottom: 1300, left: 1300 } } }, children: coverChildren });
+    }
+    sections.push({ properties: pageProps, headers, footers, children: [ ...tocChildren, ...body, ...transChildren ] });
+
+    const doc = new Document({
+      creator: 'ProcessAI', title: docTitle, description: docTypeTxt,
+      styles: {
+        default: { document: { run: { font: BODY_FONT, size: 21, color: '222A33' }, paragraph: { spacing: { line: 276 } } } },
+        paragraphStyles: [
+          { id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 32, bold: true, font: HEAD_FONT, color: DARK }, paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 0 } },
+          { id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 26, bold: true, font: HEAD_FONT, color: ACCENT }, paragraph: { spacing: { before: 240, after: 80 }, outlineLevel: 1 } },
+          { id: 'Heading3', name: 'Heading 3', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 22, bold: true, font: HEAD_FONT, color: DARK }, paragraph: { spacing: { before: 160, after: 50 }, outlineLevel: 2 } }
+        ]
+      },
+      numbering: { config: [
+        { reference: 'pa-doc-bul', levels: [{ level: 0, format: LevelFormat.BULLET, text: '▪', alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 560, hanging: 260 } }, run: { color: ACCENT, font: BODY_FONT } } }] },
+        { reference: 'pa-doc-num', levels: [{ level: 0, format: LevelFormat.DECIMAL, text: '%1.', alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 560, hanging: 300 } }, run: { bold: true, color: ACCENT } } }] }
+      ] },
+      features: { updateFields: wantToc },
+      sections
+    });
+
+    notify('⟳ Формування Word-документа…');
+    Packer.toBlob(doc).then(blob => {
+      const base = (stripPrefix(docTitle) || 'ProcessAI_document')
+        .replace(/[^\wА-Яа-яІіЇїЄєҐґ0-9 _-]/g, '').replace(/\s+/g, '_').slice(0, 70) || 'document';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = base + '.docx';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+      notify('✓ Word-документ завантажено');
+    }).catch(err => { console.error(err); notify('⚠ Помилка пакування: ' + err.message); });
+  }
+
+  // експонуємо для можливого зовнішнього виклику
+  window.generateProfessionalWord = buildProfessionalDocx;
+
+  // ── 3. Ненав'язлива інтеграція кнопки в overlay документа ──────────
+  function syncWordButton(){
+    const overlay = document.getElementById('resultOverlay');
+    if (!overlay) return;
+    const header  = overlay.querySelector('.result-header');
+    if (!header) return;
+
+    const docView  = document.getElementById('docView');
+    const resultPre= document.getElementById('resultPre');
+    const docMode  = docView
+      && docView.style.display !== 'none'
+      && docView.textContent.trim().length > 0
+      && (!resultPre || resultPre.style.display === 'none');
+
+    let btn = document.getElementById('proWordBtn');
+    if (docMode){
+      if (!btn){
+        btn = document.createElement('button');
+        btn.id = 'proWordBtn';
+        btn.className = 'mini-btn';
+        btn.type = 'button';
+        btn.textContent = '📘 WORD';
+        btn.title = 'Згенерувати професійний документ Word (.docx)';
+        btn.style.cssText = 'border-color:rgba(26,111,255,.5);color:#7fa8ff';
+        btn.addEventListener('click', () => buildProfessionalDocx({ transcript: false }));
+        const miniBtns = [...header.querySelectorAll('.mini-btn')];
+        const backBtn  = miniBtns[miniBtns.length - 1]; // кнопка «НАЗАД»
+        if (backBtn) header.insertBefore(btn, backBtn); else header.appendChild(btn);
+      }
+    } else if (btn){
+      btn.remove();
+    }
+  }
+
+  function start(){
+    const overlay = document.getElementById('resultOverlay');
+    if (!overlay){ setTimeout(start, 400); return; }
+    const obs = new MutationObserver(syncWordButton);
+    obs.observe(overlay, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+    syncWordButton();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();
+</script>
 </body>
 </html>
