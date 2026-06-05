@@ -130,11 +130,18 @@ def call_openai(deployment, messages, max_tokens, temperature, timeout=90):
         try:
             msg = r.json().get("error", {}).get("message", msg)
         except Exception:
-            pass
-        raise ApiError(msg, r.status_code)
+            body_txt = (r.text or "").strip()
+            if body_txt:
+                msg = f"{msg}: {body_txt[:300]}"
+        raise ApiError(f"Azure OpenAI: {msg}", r.status_code)
 
-    data = r.json()
-    return data["choices"][0]["message"]["content"]
+    try:
+        data = r.json()
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, ValueError, TypeError):
+        # Несподівана відповідь (напр., фільтр контенту або інша схема)
+        raise ApiError("Azure OpenAI повернув несподівану відповідь: "
+                       + (r.text or "")[:300], 502)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -318,6 +325,13 @@ def api_tts():
 @app.errorhandler(ApiError)
 def handle_api_error(e):
     return jsonify({"error": e.message}), e.status
+
+
+@app.errorhandler(Exception)
+def handle_unexpected(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
 
 
 if __name__ == "__main__":
