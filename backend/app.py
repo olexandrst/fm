@@ -22,9 +22,20 @@ import os
 import json
 
 import requests
+import certifi
 from flask import Flask, request, jsonify, send_from_directory, Response
 
 import prompts
+
+# Деякі машини мають зламаний REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE
+# (напр. шлях-заглушку), через що падають усі HTTPS-запити. Прибираємо такі
+# некоректні значення і завжди використовуємо CA-сертифікати з certifi.
+for _v in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+    _p = os.environ.get(_v)
+    if _p and not os.path.isfile(_p):
+        os.environ.pop(_v, None)
+
+CA_BUNDLE = certifi.where()
 
 # ── .env (необов'язково) ───────────────────────────────────────────────
 try:
@@ -119,6 +130,7 @@ def call_openai(deployment, messages, max_tokens, temperature, timeout=90):
             headers={"Content-Type": "application/json", "api-key": AZURE_OPENAI_KEY},
             data=json.dumps(body),
             timeout=timeout,
+            verify=CA_BUNDLE,
         )
     except requests.exceptions.Timeout:
         raise ApiError("Модель не відповіла вчасно (timeout)", 504)
@@ -262,6 +274,7 @@ def api_stt():
             },
             data=audio,
             timeout=30,
+            verify=CA_BUNDLE,
         )
     except requests.exceptions.RequestException as e:
         raise ApiError(f"STT помилка з'єднання: {e}", 502)
@@ -312,6 +325,7 @@ def api_tts():
             },
             data=ssml.encode("utf-8"),
             timeout=30,
+            verify=CA_BUNDLE,
         )
     except requests.exceptions.RequestException as e:
         raise ApiError(f"TTS помилка з'єднання: {e}", 502)
