@@ -21023,6 +21023,18 @@ canvas#bgCanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
 
 /* Document title */
 #docView > p:first-child { margin-top: 0; }
+
+/* ── Приховати індикатори моделі (жодних згадок моделі/GPT в UI) ── */
+.model-badge, .sl-model { display:none !important; }
+
+/* ── Контроль швидкості аудіо ── */
+.speed-row{ display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:18px; }
+.speed-row .speed-label{ font-family:var(--mono); font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--text2); }
+.speed-opts{ display:flex; gap:6px; }
+.speed-btn{ background:var(--bg2); border:1px solid var(--border); color:var(--text2); border-radius:8px;
+  padding:6px 13px; font-family:var(--mono); font-size:12px; cursor:pointer; transition:all .15s; }
+.speed-btn:hover{ border-color:var(--teal); color:var(--teal); }
+.speed-btn.active{ background:linear-gradient(135deg,var(--teal),var(--teal2)); color:#04060f; border-color:var(--teal); font-weight:700; }
 </style>
 </head>
 <body>
@@ -21218,6 +21230,17 @@ canvas#bgCanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
                 🎙
               </button>
               <div class="ptt-hint" id="pttHint">НАТИСНИ ЩОБ ГОВОРИТИ</div>
+            </div>
+
+            <!-- Швидкість відтворення аудіо -->
+            <div class="speed-row" id="speedRow">
+              <span class="speed-label">Швидкість аудіо</span>
+              <div class="speed-opts">
+                <button type="button" class="speed-btn active" data-rate="1.0" onclick="setTtsRate('1.0', this)">1×</button>
+                <button type="button" class="speed-btn" data-rate="1.2" onclick="setTtsRate('1.2', this)">1.2×</button>
+                <button type="button" class="speed-btn" data-rate="1.5" onclick="setTtsRate('1.5', this)">1.5×</button>
+                <button type="button" class="speed-btn" data-rate="2.0" onclick="setTtsRate('2.0', this)">2×</button>
+              </div>
             </div>
 
             <!-- Progress bar -->
@@ -21452,6 +21475,14 @@ let history = [];          // [{role, content}]
 let aiMeta = {};            // метадані сесії для побудови промпта на бекенді
 const MODEL_DISPLAY = 'ProcessAI';   // нейтральний підпис моделі (без згадок GPT)
 function sanitizeModelLabel(s){ s=(s||'').trim(); return (!s || /gpt|openai/i.test(s)) ? MODEL_DISPLAY : s; }
+
+// Швидкість відтворення аудіо (TTS). doTTS читає cfg.tts_rate.
+function setTtsRate(rate, btn){
+  cfg.tts_rate = rate;
+  document.querySelectorAll('#speedRow .speed-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (typeof toast === 'function') toast('🔊 Швидкість аудіо: ' + parseFloat(rate).toString().replace(/\.0$/,'') + '×');
+}
 let state = 'idle';        // idle | listening | thinking | speaking
 let isRec = false;
 let mRec = null;
@@ -21639,6 +21670,10 @@ async function loadBackendConfig() {
     cfg.lang = c.lang || 'uk-UA';
     cfg.tts = c.voice || 'uk-UA-PolinaNeural';
     cfg.tts_rate = c.ttsRate || '1.0';
+    // Підсвітити кнопку швидкості, що відповідає поточному значенню
+    document.querySelectorAll('#speedRow .speed-btn').forEach(b => {
+      b.classList.toggle('active', parseFloat(b.dataset.rate) === parseFloat(cfg.tts_rate));
+    });
     cfg.deployment = sanitizeModelLabel(c.modelLabel);
     cfg.deployment2 = sanitizeModelLabel(c.model2Label) || cfg.deployment;
     if (!c.openaiReady) toast('⚠ Бекенд не налаштовано: відсутні ключі Azure');
