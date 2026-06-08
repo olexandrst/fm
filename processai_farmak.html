@@ -21325,10 +21325,10 @@ canvas#bgCanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             Модель 1 — Розмова / Інтерв'ю
           </h3>
-          <div class="s-note">Швидка модель для діалогу. Рекомендовано: <strong>gpt-4o</strong> або <strong>gpt-4.1-mini</strong></div>
+          <div class="s-note">Модель налаштовується на бекенді (backend/.env).</div>
           <div class="field">
             <label>Deployment Name</label>
-            <input type="text" id="s_deployment" placeholder="gpt-4o">
+            <input type="text" id="s_deployment" placeholder="налаштовується на бекенді">
           </div>
         </div>
 
@@ -21337,10 +21337,10 @@ canvas#bgCanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
             Модель 2 — Структуризація ARIS JSON
           </h3>
-          <div class="s-note">Потужна модель для фінального аналізу. Рекомендовано: <strong>gpt-5-mini</strong> або <strong>gpt-5-chat</strong>. Якщо немає доступу — можна дублювати Модель 1.</div>
+          <div class="s-note">Модель налаштовується на бекенді (backend/.env).</div>
           <div class="field">
             <label>Deployment Name</label>
-            <input type="text" id="s_deployment2" placeholder="gpt-5-mini">
+            <input type="text" id="s_deployment2" placeholder="налаштовується на бекенді">
           </div>
         </div>
 
@@ -21450,6 +21450,8 @@ canvas#bgCanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
 let cfg = {};
 let history = [];          // [{role, content}]
 let aiMeta = {};            // метадані сесії для побудови промпта на бекенді
+const MODEL_DISPLAY = 'ProcessAI';   // нейтральний підпис моделі (без згадок GPT)
+function sanitizeModelLabel(s){ s=(s||'').trim(); return (!s || /gpt|openai/i.test(s)) ? MODEL_DISPLAY : s; }
 let state = 'idle';        // idle | listening | thinking | speaking
 let isRec = false;
 let mRec = null;
@@ -21597,35 +21599,8 @@ function patchSendBtn() {
   };
 }
 // ═══════════════════════════════════════
-// MODEL HELPERS — reasoning model support
+// MODEL HELPERS — перенесено на бекенд (backend/app.py)
 // ═══════════════════════════════════════
-const REASONING_MODELS = [
-  'gpt-5.1', 'gpt-5.1-chat', 'gpt-5.1-chat-latest',
-  'gpt-5.1-codex', 'gpt-5.1-codex-max',
-  'o1', 'o1-mini', 'o1-preview',
-  'o3', 'o3-mini', 'o4-mini'
-];
-
-function isReasoningModel(modelName) {
-  if (!modelName) return false;
-  const m = modelName.toLowerCase();
-  return REASONING_MODELS.some(r => m.includes(r));
-}
-
-// Returns {} for reasoning models (temperature not supported)
-// Returns { temperature: val } for standard models
-function tempParam(modelName, val) {
-  return isReasoningModel(modelName) ? {} : { temperature: val };
-}
-
-// Builds full request body, omitting temperature for reasoning models
-function buildBody(messages, maxTokens, temp) {
-  const dep = cfg.deployment || '';
-  const tokenKey = isReasoningModel(dep) ? 'max_completion_tokens' : 'max_tokens';
-  const body = { messages, [tokenKey]: maxTokens };
-  if (!isReasoningModel(dep)) body.temperature = temp;
-  return body;
-}
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -21664,8 +21639,8 @@ async function loadBackendConfig() {
     cfg.lang = c.lang || 'uk-UA';
     cfg.tts = c.voice || 'uk-UA-PolinaNeural';
     cfg.tts_rate = c.ttsRate || '1.0';
-    cfg.deployment = c.modelLabel || 'gpt-4o';
-    cfg.deployment2 = c.model2Label || cfg.deployment;
+    cfg.deployment = sanitizeModelLabel(c.modelLabel);
+    cfg.deployment2 = sanitizeModelLabel(c.model2Label) || cfg.deployment;
     if (!c.openaiReady) toast('⚠ Бекенд не налаштовано: відсутні ключі Azure');
   } catch(e) {
     toast('⚠ Бекенд недоступний. Запустіть backend/app.py');
@@ -21765,7 +21740,7 @@ function startSession() {
   }
 
   document.getElementById('processBadge').textContent = name;
-  const dep1 = cfg.deployment || 'gpt-4o';
+  const dep1 = cfg.deployment || MODEL_DISPLAY;
   document.getElementById('modelBadge').textContent = dep1;
   document.getElementById('setupScreen').style.display = 'none';
   document.getElementById('chatScreen').classList.add('on');
@@ -22352,7 +22327,7 @@ async function structureResult() {
     return;
   }
 
-  const dep2 = cfg.deployment2 || cfg.deployment || 'gpt-4o';
+  const dep2 = cfg.deployment2 || cfg.deployment || MODEL_DISPLAY;
 
   // Show loading
   setPipelineStep(2);
@@ -22395,7 +22370,7 @@ async function structureResult() {
 
   } catch(err) {
     document.getElementById('structLoading').classList.remove('show');
-    document.getElementById('modelBadge').textContent = cfg.deployment || 'gpt-4o';
+    document.getElementById('modelBadge').textContent = cfg.deployment || MODEL_DISPLAY;
     document.getElementById('modelBadge').classList.remove('struct');
     setPipelineStep(1);
     toast('⚠ Структуризація: ' + err.message);
@@ -22430,7 +22405,7 @@ function showResultOverlay(result, modelName) {
 
 function closeResult() {
   document.getElementById('resultOverlay').classList.remove('show');
-  document.getElementById('modelBadge').textContent = cfg.deployment || 'gpt-4o';
+  document.getElementById('modelBadge').textContent = cfg.deployment || MODEL_DISPLAY;
   document.getElementById('modelBadge').classList.remove('struct');
 }
 
@@ -22448,7 +22423,7 @@ async function generateDocument() {
     toast('⚠ Проведіть інтерв\'ю перед генерацією документа'); return;
   }
 
-  const dep2 = cfg.deployment2 || cfg.deployment || 'gpt-4o';
+  const dep2 = cfg.deployment2 || cfg.deployment || MODEL_DISPLAY;
 
   document.getElementById('structModelLabel').textContent = '↻ ' + dep2.toUpperCase();
   document.getElementById('structLoading').classList.add('show');
@@ -22669,7 +22644,7 @@ function closeResult() {
   pre.style.display = '';
   const docDiv = document.getElementById('docView');
   if (docDiv) docDiv.style.display = 'none';
-  document.getElementById('modelBadge').textContent = cfg.deployment || 'gpt-4.1';
+  document.getElementById('modelBadge').textContent = cfg.deployment || MODEL_DISPLAY;
   document.getElementById('modelBadge').classList.remove('struct');
   // Restore appropriate download button
   const dlBtn = document.querySelector('#resultOverlay .mini-btn');
@@ -22695,7 +22670,7 @@ async function generateFarmakProcedure() {
     return;
   }
 
-  const dep2 = cfg.deployment2 || cfg.deployment || 'gpt-4o';
+  const dep2 = cfg.deployment2 || cfg.deployment || MODEL_DISPLAY;
   const name = document.getElementById('processBadge').textContent;
 
   document.getElementById('structModelLabel').textContent = '↻ ' + dep2.toUpperCase();

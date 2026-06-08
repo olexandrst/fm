@@ -98,9 +98,10 @@ TTS_VOICE           = env("AZURE_TTS_VOICE", "uk-UA-PolinaNeural")
 TTS_RATE            = env("AZURE_TTS_RATE", "1.0")
 STT_LANG            = env("AZURE_STT_LANG", "uk-UA")
 
-# Дружні підписи моделей для бейджів (назва деплойменту — не секрет)
-MODEL_LABEL  = env("MODEL_LABEL",  DEPLOYMENT_PRIMARY)
-MODEL2_LABEL = env("MODEL2_LABEL", DEPLOYMENT_SECONDARY)
+# Дружні підписи моделей для бейджів (нейтральні — без згадок GPT/OpenAI).
+# За потреби можна задати власні через MODEL_LABEL / MODEL2_LABEL у .env.
+MODEL_LABEL  = env("MODEL_LABEL",  "ProcessAI")
+MODEL2_LABEL = env("MODEL2_LABEL", "ProcessAI")
 
 PORT = int(env("PORT", "8000") or "8000")
 
