@@ -22,6 +22,7 @@ import os
 import json
 
 import requests
+import certifi
 from flask import Flask, request, jsonify, send_from_directory, Response
 
 import prompts
@@ -32,6 +33,50 @@ try:
     load_dotenv()
 except Exception:
     pass
+
+# Деякі машини мають зламаний REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE
+# (напр. шлях-заглушку), через що падають усі HTTPS-запити. Прибираємо такі
+# некоректні значення.
+for _v in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+    _p = os.environ.get(_v)
+    if _p and not os.path.isfile(_p):
+        os.environ.pop(_v, None)
+
+# ── Перевірка TLS ───────────────────────────────────────────────────────
+# У корпоративних мережах трафік часто проходить через проксі з SSL-інспекцією,
+# який підписує сертифікати ВНУТРІШНІМ CA. Windows/браузер йому довіряють, а
+# Python (certifi) — ні → "unable to get local issuer certificate".
+# Рішення за пріоритетом:
+#   1) truststore — використати системне сховище довіри ОС (Windows/mac/Linux),
+#      де вже є корпоративний кореневий CA. Працює без налаштувань.
+#   2) AZURE_CA_BUNDLE=шлях до корпоративного root CA (.pem).
+#   3) INSECURE_SKIP_TLS_VERIFY=1 — вимкнути перевірку (ЛИШЕ для дев/тесту).
+USE_OS_TRUST = False
+try:
+    import truststore
+    truststore.inject_into_ssl()
+    USE_OS_TRUST = True
+except Exception:
+    pass
+
+_custom_ca = (os.environ.get("AZURE_CA_BUNDLE") or "").strip()
+if _custom_ca and os.path.isfile(_custom_ca):
+    CA_BUNDLE = _custom_ca
+else:
+    CA_BUNDLE = certifi.where()
+
+_insecure = (os.environ.get("INSECURE_SKIP_TLS_VERIFY", "") or "").strip().lower() in ("1", "true", "yes")
+# Що передаємо у requests як verify:
+#  • при truststore значення-шлях ігнорується (перевірка йде через ОС);
+#  • без нього використовується CA_BUNDLE (certifi або кастомний);
+#  • INSECURE → False (без перевірки).
+VERIFY = False if _insecure else CA_BUNDLE
+
+if _insecure:
+    try:
+        requests.packages.urllib3.disable_warnings()  # type: ignore
+    except Exception:
+        pass
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -53,9 +98,10 @@ TTS_VOICE           = env("AZURE_TTS_VOICE", "uk-UA-PolinaNeural")
 TTS_RATE            = env("AZURE_TTS_RATE", "1.0")
 STT_LANG            = env("AZURE_STT_LANG", "uk-UA")
 
-# Дружні підписи моделей для бейджів (назва деплойменту — не секрет)
-MODEL_LABEL  = env("MODEL_LABEL",  DEPLOYMENT_PRIMARY)
-MODEL2_LABEL = env("MODEL2_LABEL", DEPLOYMENT_SECONDARY)
+# Дружні підписи моделей для бейджів (нейтральні — без згадок GPT/OpenAI).
+# За потреби можна задати власні через MODEL_LABEL / MODEL2_LABEL у .env.
+MODEL_LABEL  = env("MODEL_LABEL",  "ProcessAI")
+MODEL2_LABEL = env("MODEL2_LABEL", "ProcessAI")
 
 PORT = int(env("PORT", "8000") or "8000")
 
@@ -119,6 +165,7 @@ def call_openai(deployment, messages, max_tokens, temperature, timeout=90):
             headers={"Content-Type": "application/json", "api-key": AZURE_OPENAI_KEY},
             data=json.dumps(body),
             timeout=timeout,
+            verify=VERIFY,
         )
     except requests.exceptions.Timeout:
         raise ApiError("Модель не відповіла вчасно (timeout)", 504)
@@ -130,11 +177,18 @@ def call_openai(deployment, messages, max_tokens, temperature, timeout=90):
         try:
             msg = r.json().get("error", {}).get("message", msg)
         except Exception:
-            pass
-        raise ApiError(msg, r.status_code)
+            body_txt = (r.text or "").strip()
+            if body_txt:
+                msg = f"{msg}: {body_txt[:300]}"
+        raise ApiError(f"Azure OpenAI: {msg}", r.status_code)
 
-    data = r.json()
-    return data["choices"][0]["message"]["content"]
+    try:
+        data = r.json()
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, ValueError, TypeError):
+        # Несподівана відповідь (напр., фільтр контенту або інша схема)
+        raise ApiError("Azure OpenAI повернув несподівану відповідь: "
+                       + (r.text or "")[:300], 502)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -255,6 +309,7 @@ def api_stt():
             },
             data=audio,
             timeout=30,
+            verify=VERIFY,
         )
     except requests.exceptions.RequestException as e:
         raise ApiError(f"STT помилка з'єднання: {e}", 502)
@@ -305,6 +360,7 @@ def api_tts():
             },
             data=ssml.encode("utf-8"),
             timeout=30,
+            verify=VERIFY,
         )
     except requests.exceptions.RequestException as e:
         raise ApiError(f"TTS помилка з'єднання: {e}", 502)
@@ -320,8 +376,23 @@ def handle_api_error(e):
     return jsonify({"error": e.message}), e.status
 
 
+@app.errorhandler(Exception)
+def handle_unexpected(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+
+
 if __name__ == "__main__":
     print(f"ProcessAI backend → http://localhost:{PORT}/")
     print(f"  OpenAI ready : {bool(AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY)}")
     print(f"  Speech ready : {bool(AZURE_SPEECH_KEY and AZURE_SPEECH_REGION)}")
+    if _insecure:
+        print("  TLS verify   : DISABLED (INSECURE_SKIP_TLS_VERIFY) — лише для дев!")
+    elif USE_OS_TRUST:
+        print("  TLS verify   : системне сховище ОС (truststore)")
+    elif _custom_ca:
+        print(f"  TLS verify   : {CA_BUNDLE}")
+    else:
+        print("  TLS verify   : certifi")
     app.run(host="0.0.0.0", port=PORT, debug=False)
